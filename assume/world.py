@@ -7,6 +7,7 @@ import logging
 import sys
 import time
 import warnings
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
@@ -156,6 +157,19 @@ class World:
         self.units: dict[str, BaseUnit] = {}
         self.unit_types = unit_types
         self.dst_components = demand_side_technologies
+
+        # Optional hook for integrations that need a different learning role,
+        # e.g. the PettingZoo environments in
+        # assume.reinforcement_learning.pettingzoo, which stream experience to an
+        # external RL framework instead of ASSUME's own MATD3 implementation.
+        # Any callable with the signature (learning_config, start, end) works;
+        # None keeps ASSUME's default Learning role.
+        self.learning_role_class: Callable | None = None
+
+        # Set to False to silence the per-run tqdm progress bar. Useful when a
+        # driver runs thousands of short simulations, e.g. the PettingZoo
+        # environments, which run one simulation per RL episode.
+        self.show_progress: bool = True
 
         self.bidding_strategies = bidding_strategies
         if "powerplant_energy_learning" not in bidding_strategies:
@@ -310,8 +324,11 @@ class World:
 
         from assume.reinforcement_learning.learning_role import Learning
 
+        # integrations may swap in a Learning subclass, see self.learning_role_class
+        learning_role_class = self.learning_role_class or Learning
+
         # create LearningConfig object
-        self.learning_role = Learning(
+        self.learning_role = learning_role_class(
             learning_config=self.learning_config, start=self.start, end=self.end
         )
 
@@ -828,7 +845,7 @@ class World:
             await tasks_complete_or_sleeping(c)
             logger.debug("all agents up - starting simulation")
 
-            pbar = tqdm(total=end_ts - start_ts)
+            pbar = tqdm(total=end_ts - start_ts, disable=not self.show_progress)
 
             if isinstance(self.clock, ExternalClock):
                 # allow registration before first opening
